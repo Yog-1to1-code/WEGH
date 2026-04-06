@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+go-engine
+outputs/
+.env
+*.log
+.DS_Store
+mock_grader.py
+hf_remote_grader.py
+gemini_remote_grader.py
+lmstudio_remote_grader.py
+error_logs.txt

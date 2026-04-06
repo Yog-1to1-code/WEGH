@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wegh"
+version = "0.1.0"
+description = "WEGH: Macro-Architectural CPU Designer — RL Environment for AI-driven CPU design"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core>=0.2.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "httpx>=0.25.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[project.scripts]
+server = "server.app:main"
+

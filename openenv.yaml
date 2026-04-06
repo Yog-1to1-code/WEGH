@@ -1,0 +1,15 @@
+name: wegh
+version: 0.1.0
+description: "WEGH: Macro-Architectural CPU Designer — An RL environment where AI agents learn to design CPU microarchitectures through progressive tasks from IoT to M-series superscalar."
+author: "WEGH Team"
+tags:
+  - cpu-design
+  - microarchitecture
+  - electronic-design-automation
+  - reinforcement-learning
+  - hardware-ai
+observation_dims: 20
+action_type: structured
+reward_range: [0.0, 1.0]
+max_episode_steps: 40
+tasks: 3
