@@ -26,6 +26,7 @@ COPY models.py ./
 COPY __init__.py ./
 COPY client.py ./
 COPY inference.py ./
+COPY wegh_graders.py ./
 COPY server/ ./server/
 COPY openenv.yaml ./
 COPY entrypoint.sh ./

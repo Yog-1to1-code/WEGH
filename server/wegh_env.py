@@ -20,6 +20,21 @@ from server.reward import compute_step_reward, compute_final_score
 
 logger = logging.getLogger("wegh")
 
+def sanitize_grade(raw_score: Any) -> float:
+    """Sanitizes rewards and scores to pure Python floats with strict exclusive boundaries."""
+    try:
+        if raw_score is None:
+            return 0.001
+        score = float(raw_score)
+    except (ValueError, TypeError):
+        return 0.001
+
+    if score >= 1.0:
+        return 0.999
+    elif score <= 0.0:
+        return 0.001
+    return score
+
 
 def get_free_port() -> int:
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
@@ -88,9 +103,18 @@ class WEGHEnvironment(Environment[CPUAction, CPUObservation, CPUState]):
         Purges old state, selects a task difficulty, initializes the Go daemon's
         DAG, and returns the baseline observation with constraints.
         """
-        # Select task (cycle through 0 → 1 → 2 → 0 → ...)
-        task_id = self._task_cycle % 3
-        self._task_cycle += 1
+        # Select task from kwargs or cycle through fallbacks
+        task_override = kwargs.get("task")
+        if task_override == "iot_8bit":
+            task_id = 0
+        elif task_override == "rv32im":
+            task_id = 1
+        elif task_override == "mseries_superscalar":
+            task_id = 2
+        else:
+            task_id = self._task_cycle % 3
+            self._task_cycle += 1
+            
         self._current_task_id = task_id
         
         # Generate new episode ID
@@ -172,7 +196,7 @@ class WEGHEnvironment(Environment[CPUAction, CPUObservation, CPUState]):
                 f"You have {task['max_steps']} steps to optimize this design."
             ),
             
-            final_score=0.0,
+            final_score=sanitize_grade(0.0),
             available_actions=json.dumps(go_response.get("available_actions", [])),
         )
         
@@ -207,7 +231,7 @@ class WEGHEnvironment(Environment[CPUAction, CPUObservation, CPUState]):
         engineering_notes = go_response.get("engineering_notes", "")
         
         # Compute dense reward
-        step_reward = compute_step_reward(
+        raw_step_reward = compute_step_reward(
             metrics=metrics,
             prev_metrics=self._prev_metrics,
             action_valid=action_valid,
@@ -215,6 +239,7 @@ class WEGHEnvironment(Environment[CPUAction, CPUObservation, CPUState]):
             task_id=self._state.task_id,
             task_constraints=task["constraints"],
         )
+        step_reward = float(raw_step_reward)
         
         self._cumulative_reward += step_reward
         self._state.cumulative_reward = round(self._cumulative_reward, 4)
@@ -223,9 +248,9 @@ class WEGHEnvironment(Environment[CPUAction, CPUObservation, CPUState]):
         done = step_num >= task["max_steps"]
         
         # Compute final score if done
-        final_score = 0.0
+        final_score = sanitize_grade(0.0)
         if done:
-            final_score = compute_final_score(metrics, self._state.task_id, task["constraints"])
+            final_score = sanitize_grade(compute_final_score(metrics, self._state.task_id, task["constraints"]))
         
         # Update prev metrics
         self._prev_metrics = dict(metrics)
@@ -361,11 +386,11 @@ class WEGHEnvironment(Environment[CPUAction, CPUObservation, CPUState]):
         """Return an observation for error cases."""
         return CPUObservation(
             done=True,
-            reward=0.0,
+            reward=sanitize_grade(0.0),
             task_id=self._state.task_id,
             task_name=task["name"],
             task_constraints=task["constraint_text"],
             max_steps=task["max_steps"],
             feedback_string=f"ERROR: {error_msg}",
-            final_score=0.0,
+            final_score=sanitize_grade(0.0),
         )

@@ -1,15 +1,26 @@
+spec_version: 1
 name: wegh
-version: 0.1.0
-description: "WEGH: Macro-Architectural CPU Designer — An RL environment where AI agents learn to design CPU microarchitectures through progressive tasks from IoT to M-series superscalar."
+version: "1.0.0"
+description: "WEGH: Macro-Architectural CPU Designer enforcing strict PPA heuristics via RL."
 author: "WEGH Team"
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
 tags:
   - cpu-design
-  - microarchitecture
-  - electronic-design-automation
   - reinforcement-learning
-  - hardware-ai
-observation_dims: 20
-action_type: structured
 reward_range: [0.0, 1.0]
-max_episode_steps: 40
-tasks: 3
+tasks:
+  - id: iot_8bit
+    name: IoT 8-Bit Core
+    difficulty: easy
+    grader: wegh_graders:grade_iot_8bit
+  - id: rv32im
+    name: Embedded RV32IM
+    difficulty: medium
+    grader: wegh_graders:grade_rv32im
+  - id: mseries_superscalar
+    name: M-Series Superscalar
+    difficulty: hard
+    grader: wegh_graders:grade_mseries_superscalar
