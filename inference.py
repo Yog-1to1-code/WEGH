@@ -16,9 +16,10 @@ from models import CPUAction, CPUObservation
 from server.wegh_env import WEGHEnvironment
 
 # Configuration
-API_BASE_URL: str = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME: str = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
-HF_TOKEN: str = os.environ.get("HF_TOKEN", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 def build_system_prompt() -> str:
     return (
@@ -143,7 +144,7 @@ def execute_task(env: WEGHEnvironment, client: OpenAI, task_name: str) -> float:
 TASK_IDS: List[str] = ["iot_8bit", "rv32im", "mseries_superscalar"]
 
 def main() -> None:
-    if not HF_TOKEN:
+    if HF_TOKEN is None:
         print("[WARNING] HF_TOKEN missing.", file=sys.stderr)
 
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy")
