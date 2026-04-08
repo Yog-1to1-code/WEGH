@@ -20,16 +20,16 @@ def extract_score(*args: Any, **kwargs: Any) -> float:
     if not obs and args:
         obs = args[-1]
 
+    result_score = 0.001
+    
     if isinstance(obs, CPUObservation):
-        return sanitize_grade(obs.final_score)
+        result_score = sanitize_grade(obs.final_score)
+    elif isinstance(obs, dict) and "final_score" in obs:
+        result_score = sanitize_grade(obs["final_score"])
+    elif isinstance(obs, (int, float)):
+        result_score = sanitize_grade(obs)
 
-    if isinstance(obs, dict) and "final_score" in obs:
-        return sanitize_grade(obs["final_score"])
-
-    if isinstance(obs, (int, float)):
-        return sanitize_grade(obs)
-
-    return 0.001
+    return max(0.001, min(float(result_score), 0.999))
 
 
 def grade_iot_8bit(*args: Any, **kwargs: Any) -> float:

@@ -207,7 +207,7 @@ def run_task(llm_client: OpenAI, task_name: str) -> None:
 
         # Compute score after env context exits cleanly
         score = sum(rewards) / len(rewards) if rewards else 0.0
-        score = max(1e-6, min(score, 1 - 1e-6))
+        score = max(0.001, min(score, 0.999))
         success = score >= SUCCESS_THRESHOLD
 
     except Exception as exc:
