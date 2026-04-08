@@ -12,3 +12,5 @@ hf_remote_grader.py
 gemini_remote_grader.py
 lmstudio_remote_grader.py
 error_logs.txt
+tests/
+People_reference/

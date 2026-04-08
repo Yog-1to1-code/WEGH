@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+WEGH — Inference Script (OpenEnv Phase 2 Compliant)
+
+Connects to the ALREADY-RUNNING WEGH FastAPI server via WebSocket client.
+Does NOT instantiate the server-side WEGHEnvironment directly.
+"""
 
 import json
 import os
@@ -13,13 +19,17 @@ except ImportError:
 
 from pydantic import ValidationError
 from models import CPUAction, CPUObservation
-from server.wegh_env import WEGHEnvironment
+from client import WEGHEnv
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+# The server is already running inside the container on this port
+ENV_PORT = os.getenv("ENV_PORT", "7860")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", f"http://127.0.0.1:{ENV_PORT}")
 
 def build_system_prompt() -> str:
     return (
@@ -34,23 +44,18 @@ def build_system_prompt() -> str:
     )
 
 def build_user_prompt(observation: CPUObservation, step: int, max_steps: int) -> str:
+    # Truncate feedback to first 500 chars to reduce input tokens and LLM latency
+    feedback_truncated = observation.feedback_string[:500] if observation.feedback_string else ""
     return (
         f"Step {step}/{max_steps}\n"
         f"Task: {observation.task_name} | Constraints: {observation.task_constraints}\n"
-        "-- Current PPA Metrics --\n"
-        f"Estimated IPC: {observation.current_estimated_ipc:.2f}\n"
-        f"Throughput (GIPS): {observation.throughput_gips:.2f}\n"
-        f"Power: {observation.total_power_mw:.2f} mW\n"
-        f"Area: {observation.total_area_mm2:.2f} mm²\n"
-        f"Thermal: {observation.thermal_celsius:.2f} °C\n"
-        f"Power Density: {observation.max_power_density:.2f}\n"
-        f"Performance/Watt: {observation.perf_per_watt:.2f}\n"
-        f"Throttled Factor: {observation.throttled_factor:.2f}\n\n"
-        "-- Architecture State --\n"
-        f"Active Components: {observation.active_components}\n"
-        f"Available Actions: {observation.available_actions}\n"
-        f"Feedback: {observation.feedback_string}\n\n"
-        "Generate your next action in JSON format."
+        f"IPC:{observation.current_estimated_ipc:.2f} Throughput:{observation.throughput_gips:.2f}GIPS "
+        f"Power:{observation.total_power_mw:.1f}mW Area:{observation.total_area_mm2:.2f}mm² "
+        f"PD:{observation.max_power_density:.2f} Thermal:{observation.thermal_celsius:.1f}°C "
+        f"PPW:{observation.perf_per_watt:.2f} Throttle:{observation.throttled_factor:.2f}\n"
+        f"Components: {observation.active_components}\n"
+        f"Feedback: {feedback_truncated}\n"
+        "Respond with a single JSON action."
     )
 
 def extract_json_payload(raw_content: str) -> str:
@@ -77,9 +82,9 @@ def get_model_action(client: OpenAI, observation: CPUObservation, step: int) -> 
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            max_tokens=250,
+            max_tokens=150,
             temperature=0.1,
-            timeout=30.0
+            timeout=10.0
         )
         
         raw_output = response.choices[0].message.content or "{}"
@@ -104,42 +109,49 @@ def get_model_action(client: OpenAI, observation: CPUObservation, step: int) -> 
             reasoning=f"Network fallback: {error}"
         )
 
-def execute_task(env: WEGHEnvironment, client: OpenAI, task_name: str) -> float:
-    observation = env.reset(task=task_name)
+def execute_task(env, llm_client: OpenAI, task_name: str) -> float:
+    """Run one episode for a given task via the env client."""
+    result = env.reset(task=task_name)
+    observation = result.observation
     step_count = 0
     rewards: List[float] = []
 
     print(f"[START] task={observation.task_name} env=WEGH model={MODEL_NAME}", flush=True)
 
-    while not observation.done:
+    while not result.done:
         step_count += 1
-        action = get_model_action(client, observation, step_count)
+        action = get_model_action(llm_client, observation, step_count)
         
         try:
-            observation = env.step(action)
+            result = env.step(action)
+            observation = result.observation
             error_msg = "null"
         except Exception as error:
             error_msg = str(error).replace("\n", " ")
+            # On error, mark done with zero reward
+            result = type('FakeResult', (), {'done': True, 'reward': 0.0, 'observation': observation})()
             observation.done = True
             observation.reward = 0.0
             
-        rewards.append(observation.reward)
-        formatted_reward = f"{observation.reward:.2f}"
-        is_done = str(observation.done).lower()
+        step_reward = result.reward if result.reward is not None else 0.0
+        rewards.append(step_reward)
+        formatted_reward = f"{step_reward:.2f}"
+        is_done = str(result.done).lower()
         
         action_str = action.model_dump_json().replace(" ", "")
         
         print(f"[STEP] step={step_count} action={action_str} reward={formatted_reward} done={is_done} error={error_msg}", flush=True)
 
-        if step_count > observation.max_steps + 5:
+        if step_count >= observation.max_steps:
             break
 
-    is_success = str(observation.final_score > 0.5).lower()
+    final_score = getattr(observation, 'final_score', 0.0)
+    is_success = str(final_score > 0.5).lower()
     formatted_rewards = ",".join(f"{r:.2f}" for r in rewards)
 
     # Compliant output with the new Scaler guidelines (score field removed)
     print(f"[END] success={is_success} steps={step_count} rewards={formatted_rewards}", flush=True)
-    return observation.final_score
+    return final_score
 
 TASK_IDS: List[str] = ["iot_8bit", "rv32im", "mseries_superscalar"]
 
@@ -147,17 +159,15 @@ def main() -> None:
     if HF_TOKEN is None:
         print("[WARNING] HF_TOKEN missing.", file=sys.stderr)
 
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy")
-    env = WEGHEnvironment()
-
-    if not env.go_client.wait_for_ready(max_wait=15):
-        print("[ERROR] WEGH Engine daemon failed.", file=sys.stderr)
-        sys.exit(1)
-
-    for task_name in TASK_IDS:
-        execute_task(env, client, task_name)
-
-    env.go_client.close()
+    llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy")
+    
+    # Connect to the ALREADY RUNNING server via WebSocket client
+    # The server is started by the container's entrypoint.sh, NOT by this script
+    print(f"[INFO] Connecting to WEGH environment at {ENV_BASE_URL}", file=sys.stderr)
+    
+    with WEGHEnv(base_url=ENV_BASE_URL).sync() as env:
+        for task_name in TASK_IDS:
+            execute_task(env, llm_client, task_name)
 
 if __name__ == "__main__":
     main()

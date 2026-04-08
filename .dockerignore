@@ -9,3 +9,6 @@ tests/
 outputs/
 .env
 .DS_Store
+*.log
+error_logs.txt
+*_grader.py

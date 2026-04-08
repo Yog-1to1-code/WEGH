@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: indigo
 sdk: docker
 pinned: false
-app_port: 7860
+app_port: 8000
 tags:
   - openenv
   - cpu-design
@@ -84,7 +84,7 @@ The inference script runs one episode per task (`iot_8bit` → `rv32im` → `mse
 ┌──────────────────────────────────────────────────────────┐
 │              Docker Container (2 vCPU, 8GB RAM)           │
 │                                                           │
-│  Python/OpenEnv Server (port 7860)                       │
+│  Python/OpenEnv Server (port 8000)                       │
 │  ├── FastAPI + Uvicorn (WebSocket + REST)                 │
 │  ├── WEGHEnvironment(Environment)                        │
 │  │   ├── sanitize_grade() — Phase 2 firewall             │
@@ -276,7 +276,7 @@ git push  # Dockerfile is auto-detected by HF Spaces
 
 ```bash
 docker build -t wegh .
-docker run -p 7860:7860 wegh
+docker run -p 8000:8000 wegh
 ```
 
 ### Local Development (No Docker)
@@ -289,7 +289,7 @@ cd engine && go build -o ../go-engine ./cmd/server && cd ..
 uv pip install openenv-core fastapi uvicorn httpx openai
 
 # 3. Start the server (Go daemon spawns automatically)
-uvicorn server.app:app --host 0.0.0.0 --port 7860
+uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
 ### Specifications
@@ -316,7 +316,7 @@ uvicorn server.app:app --host 0.0.0.0 --port 7860
 
 The Phase 2 automated evaluator reads `openenv.yaml` to boot the FastAPI server, then evaluates via REST:
 
-1. **`openenv.yaml`** declares `spec_version: 1`, `runtime: fastapi`, `app: server.app:app`, `port: 7860`, and 3 task definitions
+1. **`openenv.yaml`** declares `spec_version: 1`, `runtime: fastapi`, `app: server.app:app`, `port: 8000`, and 3 task definitions
 2. For each task, the evaluator calls `reset(task=<task_id>)` → runs step/observe loop → reads `done=True`
 3. The final observation is serialized as a JSON dict (not a Pydantic object) and passed to the grader hook
 4. Grader hooks (`wegh_graders:grade_<task>`) extract `final_score` from the dict and return a sanitized float in (0.0, 1.0) exclusive
