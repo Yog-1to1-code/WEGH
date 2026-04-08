@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wegh"
 version = "0.1.0"
-description = "WEGH: Macro-Architectural CPU Designer — RL Environment for AI-driven CPU design"
+description = "WEGH: Workload Evaluation for Generative Hardware — RL Environment for AI-driven CPU design"
 requires-python = ">=3.10"
 dependencies = [
     "openenv-core[core]>=0.2.2",

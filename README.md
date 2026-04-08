@@ -14,7 +14,7 @@ tags:
   - hardware-architecture
 ---
 
-# 🔥 WEGH: Macro-Architectural CPU Designer
+# 🔥 WEGH: Workload Evaluation for Generative Hardware
 
 > An RL environment where AI agents learn to design CPU microarchitectures — from IoT microcontrollers to Apple M-series superscalar processors.
 
