@@ -83,18 +83,18 @@ The inference script runs one episode per task (`iot_8bit` → `rv32im` → `mse
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              Docker Container (2 vCPU, 8GB RAM)           │
-│                                                           │
+│              Docker Container (2 vCPU, 8GB RAM)          │
+│                                                          │
 │  Python/OpenEnv Server (port 8000)                       │
-│  ├── FastAPI + Uvicorn (WebSocket + REST)                 │
+│  ├── FastAPI + Uvicorn (WebSocket + REST)                │
 │  ├── WEGHEnvironment(Environment)                        │
 │  │   ├── sanitize_grade() — Phase 2 firewall             │
 │  │   ├── Dense Reward Shaping (per-step + final)         │
 │  │   └── LLM Engineering Feedback Generator              │
-│  └── atexit + __del__ daemon lifecycle hooks              │
-│           │                                               │
-│           │ httpx (localhost JSON-over-HTTP)               │
-│           ▼                                               │
+│  └── atexit + __del__ daemon lifecycle hooks             │
+│           │                                              │
+│           │ httpx (localhost JSON-over-HTTP)             │
+│           ▼                                              │
 │  Go Simulation Engine (dynamic port, internal only)      │
 │  ├── DAG-based CPU component graph                       │
 │  │   ├── Kahn's algorithm topological sort               │
