@@ -17,9 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 COPY --from=go-builder /go-engine /app/go-engine
 RUN chmod +x /app/go-engine
 
-# Install Python deps using uv (Hackathon mandatory requirement)
+# Install Python deps
 RUN pip install --no-cache-dir uv && \
-    uv pip install --system openenv-core fastapi uvicorn httpx openai
+    uv pip install --system "openenv-core[core]>=0.2.2" openai httpx
 
 # Copy application code
 COPY models.py ./
@@ -29,13 +29,15 @@ COPY inference.py ./
 COPY wegh_graders.py ./
 COPY server/ ./server/
 COPY openenv.yaml ./
-COPY entrypoint.sh ./
-RUN chmod +x /app/entrypoint.sh
 
-# Health check for HF Spaces
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+# Set PYTHONPATH so imports work correctly
+ENV PYTHONPATH="/app:$PYTHONPATH"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 EXPOSE 8000
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+# CMD (not ENTRYPOINT) — allows evaluator to override the startup command
+CMD ["sh", "-c", "uvicorn server.app:app --host 0.0.0.0 --port 8000"]
