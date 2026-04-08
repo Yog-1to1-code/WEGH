@@ -1,53 +1,102 @@
 #!/usr/bin/env python3
 """
-WEGH — Inference Script (OpenEnv Phase 2 Compliant)
+inference.py — WEGH OpenEnv Agent
+==================================
+Runs an LLM agent through all 3 CPU design tasks and emits structured stdout logs.
 
-Connects to the ALREADY-RUNNING WEGH FastAPI server via WebSocket client.
-Does NOT instantiate the server-side WEGHEnvironment directly.
+Required environment variables:
+    API_BASE_URL      LLM API endpoint
+    MODEL_NAME        Model identifier
+    HF_TOKEN          HuggingFace / API key
+    LOCAL_IMAGE_NAME  (optional) Docker image to launch as env server
+
+Stdout format (must not deviate):
+    [START] task=<task> env=<benchmark> model=<model>
+    [STEP]  step=<n> action=<action> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...>
 """
 
 import json
 import os
 import sys
-from typing import List
+from typing import List, Optional
 
 try:
-    from openai import OpenAI
+    from dotenv import load_dotenv
+    load_dotenv()
 except ImportError:
-    print("[ERROR] openai package not installed.")
-    sys.exit(1)
+    pass
 
+from openai import OpenAI
 from pydantic import ValidationError
+
 from models import CPUAction, CPUObservation
 from client import WEGHEnv
 
+# ---------------------------------------------------------------------------
 # Configuration
+# ---------------------------------------------------------------------------
+
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "meta-llama/Llama-3.1-8B-Instruct")
+HF_TOKEN     = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+IMAGE_NAME   = os.getenv("LOCAL_IMAGE_NAME")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8000")
+BENCHMARK    = "WEGH"
 
-# The server is already running inside the container on this port
-ENV_PORT = os.getenv("ENV_PORT", "7860")
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", f"http://127.0.0.1:{ENV_PORT}")
+TASKS = ["iot_8bit", "rv32im", "mseries_superscalar"]
+SUCCESS_THRESHOLD = 0.5
+TEMPERATURE = 0.1
+MAX_TOKENS  = 150
 
-def build_system_prompt() -> str:
-    return (
-        "You are an expert systems engineer and CPU architect. "
-        "Your task is to design a CPU architecture ranging from strict IoT microcontrollers to M-Series Superscalar configurations. "
-        "You operate by modifying a microarchitectural DAG. "
-        "Your primary objective is to maximize the final score derived from PPA heuristics without thermal throttling. "
-        "Output ONLY a valid JSON object matching this schema: "
-        '{"action_type": "<action>", "target_component": "<id>", "parameter_name": "<name>", '
-        '"parameter_value": <float>, "source_node": "<id>", "target_node": "<id>", "reasoning": "<string>"}\n'
-        "Valid action types: resize, add_component, remove_component, connect, configure."
+# ---------------------------------------------------------------------------
+# Logging helpers — must match the spec exactly
+# ---------------------------------------------------------------------------
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val  = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
     )
 
-def build_user_prompt(observation: CPUObservation, step: int, max_steps: int) -> str:
-    # Truncate feedback to first 500 chars to reduce input tokens and LLM latency
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = (
+    "You are an expert systems engineer and CPU architect. "
+    "Your task is to design a CPU architecture ranging from strict IoT microcontrollers to M-Series Superscalar configurations. "
+    "You operate by modifying a microarchitectural DAG. "
+    "Your primary objective is to maximize the final score derived from PPA heuristics without thermal throttling. "
+    "Output ONLY a valid JSON object matching this schema: "
+    '{"action_type": "<action>", "target_component": "<id>", "parameter_name": "<name>", '
+    '"parameter_value": <float>, "source_node": "<id>", "target_node": "<id>", "reasoning": "<string>"}\n'
+    "Valid action types: resize, add_component, remove_component, connect, configure."
+)
+
+# ---------------------------------------------------------------------------
+# LLM call
+# ---------------------------------------------------------------------------
+
+def get_model_action(client: OpenAI, observation: CPUObservation, step: int) -> CPUAction:
+    """Ask the LLM for a CPU design action."""
     feedback_truncated = observation.feedback_string[:500] if observation.feedback_string else ""
-    return (
-        f"Step {step}/{max_steps}\n"
+    user_prompt = (
+        f"Step {step}/{observation.max_steps}\n"
         f"Task: {observation.task_name} | Constraints: {observation.task_constraints}\n"
         f"IPC:{observation.current_estimated_ipc:.2f} Throughput:{observation.throughput_gips:.2f}GIPS "
         f"Power:{observation.total_power_mw:.1f}mW Area:{observation.total_area_mm2:.2f}mm² "
@@ -58,116 +107,128 @@ def build_user_prompt(observation: CPUObservation, step: int, max_steps: int) ->
         "Respond with a single JSON action."
     )
 
-def extract_json_payload(raw_content: str) -> str:
-    content = raw_content.strip()
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE,
+            stream=False,
+        )
+
+        raw_output = response.choices[0].message.content or "{}"
+        json_string = _extract_json(raw_output)
+        return CPUAction(**json.loads(json_string))
+
+    except (json.JSONDecodeError, ValidationError) as error:
+        print(f"[DEBUG] Parse error: {error}", flush=True)
+        return _fallback_action(f"parse: {error}")
+    except Exception as error:
+        print(f"[DEBUG] LLM request failed: {error}", flush=True)
+        return _fallback_action(f"network: {error}")
+
+
+def _extract_json(raw: str) -> str:
+    content = raw.strip()
     if "```json" in content:
         content = content.split("```json")[1].split("```")[0].strip()
     elif "```" in content:
         content = content.split("```")[1].split("```")[0].strip()
-    
-    start_index = content.find("{")
-    end_index = content.rfind("}") + 1
-    
-    if start_index >= 0 and end_index > start_index:
-        return content[start_index:end_index]
+    start = content.find("{")
+    end = content.rfind("}") + 1
+    if start >= 0 and end > start:
+        return content[start:end]
     return content
 
-def get_model_action(client: OpenAI, observation: CPUObservation, step: int) -> CPUAction:
-    messages = [
-        {"role": "system", "content": build_system_prompt()},
-        {"role": "user", "content": build_user_prompt(observation, step, observation.max_steps)}
-    ]
-    
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            max_tokens=150,
-            temperature=0.1,
-            timeout=10.0
-        )
-        
-        raw_output = response.choices[0].message.content or "{}"
-        json_string = extract_json_payload(raw_output)
-        return CPUAction(**json.loads(json_string))
-        
-    except (json.JSONDecodeError, ValidationError) as error:
-        # Fallback to prevent termination on parse failure
-        return CPUAction(
-            action_type="resize",
-            target_component="l1d",
-            parameter_name="size_kb",
-            parameter_value=32.0,
-            reasoning=f"Parse fallback: {error}"
-        )
-    except Exception as error:
-        return CPUAction(
-            action_type="resize",
-            target_component="l1d",
-            parameter_name="size_kb",
-            parameter_value=32.0,
-            reasoning=f"Network fallback: {error}"
-        )
 
-def execute_task(env, llm_client: OpenAI, task_name: str) -> float:
-    """Run one episode for a given task via the env client."""
-    result = env.reset(task=task_name)
-    observation = result.observation
-    step_count = 0
+def _fallback_action(reason: str) -> CPUAction:
+    return CPUAction(
+        action_type="resize",
+        target_component="l1d",
+        parameter_name="size_kb",
+        parameter_value=32.0,
+        reasoning=f"Fallback: {reason}"
+    )
+
+# ---------------------------------------------------------------------------
+# Single task runner
+# ---------------------------------------------------------------------------
+
+def run_task(llm_client: OpenAI, task_name: str) -> None:
+    """Run one full episode for the given task, emitting [START]/[STEP]/[END] logs."""
+
+    if IMAGE_NAME:
+        env_instance = WEGHEnv.from_docker_image(IMAGE_NAME, task=task_name)
+    else:
+        env_instance = WEGHEnv(base_url=ENV_BASE_URL)
+
     rewards: List[float] = []
+    steps_taken   = 0
+    score         = 0.0
+    success       = False
+    last_error: Optional[str] = None
 
-    print(f"[START] task={observation.task_name} env=WEGH model={MODEL_NAME}", flush=True)
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
-    while not result.done:
-        step_count += 1
-        action = get_model_action(llm_client, observation, step_count)
-        
-        try:
-            result = env.step(action)
-            observation = result.observation
-            error_msg = "null"
-        except Exception as error:
-            error_msg = str(error).replace("\n", " ")
-            # On error, mark done with zero reward
-            result = type('FakeResult', (), {'done': True, 'reward': 0.0, 'observation': observation})()
-            observation.done = True
-            observation.reward = 0.0
-            
-        step_reward = result.reward if result.reward is not None else 0.0
-        rewards.append(step_reward)
-        formatted_reward = f"{step_reward:.2f}"
-        is_done = str(result.done).lower()
-        
-        action_str = action.model_dump_json().replace(" ", "")
-        
-        print(f"[STEP] step={step_count} action={action_str} reward={formatted_reward} done={is_done} error={error_msg}", flush=True)
+    try:
+        with env_instance.sync() as env:
+            if not IMAGE_NAME:
+                result = env.reset(task=task_name)
+            else:
+                result = env.reset()
 
-        if step_count >= observation.max_steps:
-            break
+            for step in range(1, (result.observation.max_steps or 30) + 1):
+                if result.done:
+                    break
 
-    final_score = getattr(observation, 'final_score', 0.0)
-    is_success = str(final_score > 0.5).lower()
-    formatted_rewards = ",".join(f"{r:.2f}" for r in rewards)
+                observation = result.observation
+                action = get_model_action(llm_client, observation, step)
 
-    # Compliant output with the new Scaler guidelines (score field removed)
-    print(f"[END] success={is_success} steps={step_count} rewards={formatted_rewards}", flush=True)
-    return final_score
+                try:
+                    result = env.step(action)
+                    last_error = None
+                except Exception as exc:
+                    last_error = str(exc).replace("\n", " ")
+                    result.done = True
 
-TASK_IDS: List[str] = ["iot_8bit", "rv32im", "mseries_superscalar"]
+                reward = result.reward or 0.0
+                done   = result.done
+                rewards.append(reward)
+                steps_taken = step
+
+                action_str = action.model_dump_json().replace(" ", "")
+                log_step(step=step, action=action_str, reward=reward, done=done, error=last_error)
+
+                if done:
+                    break
+
+        # Compute score after env context exits cleanly
+        score = sum(rewards) / len(rewards) if rewards else 0.0
+        score = max(1e-6, min(score, 1 - 1e-6))
+        success = score >= SUCCESS_THRESHOLD
+
+    except Exception as exc:
+        print(f"[DEBUG] Task {task_name} error: {exc}", flush=True)
+
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+# ---------------------------------------------------------------------------
+# Main — iterate all tasks
+# ---------------------------------------------------------------------------
 
 def main() -> None:
-    if HF_TOKEN is None:
-        print("[WARNING] HF_TOKEN missing.", file=sys.stderr)
+    if not HF_TOKEN:
+        print("[WARNING] HF_TOKEN not set.", file=sys.stderr)
 
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy")
-    
-    # Connect to the ALREADY RUNNING server via WebSocket client
-    # The server is started by the container's entrypoint.sh, NOT by this script
-    print(f"[INFO] Connecting to WEGH environment at {ENV_BASE_URL}", file=sys.stderr)
-    
-    with WEGHEnv(base_url=ENV_BASE_URL).sync() as env:
-        for task_name in TASK_IDS:
-            execute_task(env, llm_client, task_name)
+
+    for task_name in TASKS:
+        run_task(llm_client, task_name)
+
 
 if __name__ == "__main__":
     main()

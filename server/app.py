@@ -1,30 +1,41 @@
 # WEGH — FastAPI Application
-# Creates the OpenEnv-compliant FastAPI app using create_fastapi_app helper.
+# Creates the OpenEnv-compliant FastAPI app using create_app helper.
 
-import sys
-import os
+import argparse
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from openenv.core.env_server.http_server import create_app
+except ImportError:
+    from openenv.core.env_server import create_fastapi_app as create_app
 
-from openenv.core.env_server import create_fastapi_app
-from models import CPUAction, CPUObservation
-from server.wegh_env import WEGHEnvironment
+try:
+    from ..models import CPUAction, CPUObservation
+    from .wegh_env import WEGHEnvironment
+except (ModuleNotFoundError, ImportError):
+    from models import CPUAction, CPUObservation
+    from server.wegh_env import WEGHEnvironment
 
 
-def create_env():
-    """Factory function for creating the environment instance."""
-    return WEGHEnvironment()
+app = create_app(
+    WEGHEnvironment,
+    CPUAction,
+    CPUObservation,
+    env_name="wegh",
+    max_concurrent_envs=1,
+)
 
-
-# Create the FastAPI app using OpenEnv's helper
-# This sets up WebSocket endpoints, health checks, and proper routing
-app = create_fastapi_app(create_env, CPUAction, CPUObservation)
 
 def main():
+    """Entry point for: uv run --project . server"""
     import uvicorn
-    uvicorn.run("server.app:app", host="0.0.0.0", port=8000, reload=True)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+
+    uvicorn.run(app, host=args.host, port=args.port)
+
 
 if __name__ == "__main__":
     main()
-
