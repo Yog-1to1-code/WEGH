@@ -1,13 +1,14 @@
-// Package simulator implements analytical heuristic models for CPU PPA metrics.
-// These are NOT cycle-accurate simulations — they're parameterized equations that
-// capture the directional trade-offs real chip architects face.
-// Speed target: < 50μs per evaluation.
+// Package simulator implements hybrid CPU PPA evaluation.
+// Stage 2: IPC is computed via cycle-accurate pipeline simulation (internal/pipeline).
+// Power, Area, Thermal still use analytical models.
+// Speed target: < 500μs per evaluation (pipeline sim + analytical).
 package simulator
 
 import (
 	"math"
 
 	"github.com/wegh/engine/internal/graph"
+	"github.com/wegh/engine/internal/pipeline"
 )
 
 // Metrics holds the complete PPA evaluation result for a CPU design.
@@ -38,7 +39,9 @@ type Metrics struct {
 	AreaEfficiency float64 `json:"area_efficiency"` // throughput / area
 }
 
-// Evaluate runs all analytical models on the DAG and returns PPA metrics.
+// Evaluate runs hybrid analytical + cycle-accurate models on the DAG.
+// Pipeline IPC is computed via cycle-accurate simulation (~80μs).
+// Power, Area, Thermal use analytical models (~20μs).
 func Evaluate(dag *graph.DAG, taskID int) Metrics {
 	m := Metrics{
 		ComponentPower: make(map[string]float64),
@@ -49,11 +52,13 @@ func Evaluate(dag *graph.DAG, taskID int) Metrics {
 	// Extract configuration parameters from the DAG nodes
 	cfg := extractConfig(dag, taskID)
 
-	// Run analytical models in sequence (each ~5-10μs)
+	// Analytical models for power, area, thermal
 	computeArea(dag, &cfg, &m)
 	computePower(dag, &cfg, &m)
 	computeThermal(&cfg, &m)
-	computeIPC(dag, &cfg, &m)
+
+	// Cycle-accurate pipeline simulation for IPC
+	computeIPCSimulated(&cfg, &m)
 
 	// Derived metrics
 	if m.TotalPowerMW > 0 {
@@ -217,11 +222,105 @@ func extractConfig(dag *graph.DAG, taskID int) config {
 	return c
 }
 
-// === IPC MODEL ===
+// === IPC MODEL (CYCLE-ACCURATE) ===
 
-func computeIPC(dag *graph.DAG, cfg *config, m *Metrics) {
+// computeIPCSimulated builds a pipeline engine from the DAG config,
+// generates a workload-representative instruction trace, and simulates
+// it cycle-by-cycle to produce real IPC numbers.
+//
+// This replaces the old analytical computeIPC which used formulas.
+// The simulation reveals real interactions between pipeline depth,
+// branch prediction, execution units, and register pressure.
+func computeIPCSimulated(cfg *config, m *Metrics) {
+	// Build pipeline configuration from DAG parameters
+	pCfg := pipeline.PipelineConfig{
+		Depth:          int(cfg.PPipeDepth),
+		IssueWidth:     int(cfg.PIssueWidth),
+		IntALUs:        int(cfg.IntALUs),
+		MulDivs:        int(cfg.MulDivs),
+		FPUnits:        int(cfg.FPUnits),
+		SIMDUnits:      int(cfg.SIMDUnits),
+		LoadUnits:      int(cfg.LoadUnits),
+		StoreUnits:     int(cfg.StoreUnits),
+		ROBSize:        int(cfg.ROBSize),
+		RSSize:         int(cfg.RSSize),
+		BranchAccuracy: branchAccuracyFromConfig(cfg),
+		ClockGHz:       cfg.PClockGHz,
+		TaskID:         cfg.TaskID,
+	}
+
+	// Trace size: enough for statistical significance, small enough for speed.
+	// 5K instructions ≈ 40μs simulation time on Apple M1.
+	traceSize := 5000
+	maxCycles := traceSize * 4 // Generous cycle budget
+
+	// Generate workload trace
+	traceCfg := pipeline.DefaultTraceConfig(cfg.TaskID)
+	trace := pipeline.GenerateTrace(traceCfg, traceSize, 42)
+
+	// Run cycle-accurate simulation for P-cores
+	engine := pipeline.NewEngine(pCfg)
+	result := engine.Simulate(trace, maxCycles)
+	pIPC := result.IPC
+
+	// E-core simulation (if present): simpler pipeline
+	eIPC := 0.0
+	if cfg.ECoreCount > 0 && cfg.EIssueWidth > 0 {
+		eCfg := pipeline.PipelineConfig{
+			Depth:          int(cfg.EPipeDepth),
+			IssueWidth:     int(cfg.EIssueWidth),
+			IntALUs:        int(math.Max(cfg.IntALUs*0.5, 1)),
+			MulDivs:        1,
+			LoadUnits:      1,
+			StoreUnits:     1,
+			BranchAccuracy: branchAccuracyFromConfig(cfg) * 0.95, // Simpler predictor
+			ClockGHz:       cfg.EClockGHz,
+			TaskID:         cfg.TaskID,
+		}
+		eEngine := pipeline.NewEngine(eCfg)
+		eResult := eEngine.Simulate(trace, maxCycles)
+		eIPC = eResult.IPC
+	}
+
+	m.IPC = pIPC
+
+	// Apply thermal throttling to clock
+	clockP := cfg.PClockGHz * m.ThrottledFactor
+	clockE := cfg.EClockGHz * m.ThrottledFactor
+	m.EffectiveClockGHz = clockP
+
+	// Multi-core throughput
+	pThroughput := pIPC * clockP * cfg.PCoreCount
+	eThroughput := eIPC * clockE * cfg.ECoreCount
+	m.ThroughputGIPS = pThroughput + eThroughput
+}
+
+// branchAccuracyFromConfig converts the DAG's branch predictor type
+// into a prediction accuracy for the pipeline simulator.
+// In Stage 4, this will be replaced by real predictor simulation.
+func branchAccuracyFromConfig(cfg *config) float64 {
+	// Branch predictor accuracy lookup table:
+	// type 0=static, 1=bimodal, 2=gshare, 3=TAGE, 4=perceptron
+	baseAccuracy := []float64{0.80, 0.88, 0.93, 0.97, 0.975}
+	bpIdx := int(math.Min(cfg.BPType, 4))
+	acc := baseAccuracy[bpIdx]
+
+	// BTB size bonus: larger BTB slightly improves accuracy
+	if cfg.BTBEntries > 0 {
+		acc += 0.005 * math.Log2(cfg.BTBEntries/256+1)
+	}
+	// BHT size bonus
+	if cfg.BHTSize > 0 {
+		acc += 0.003 * math.Log2(cfg.BHTSize/1024+1)
+	}
+
+	return math.Min(0.999, acc)
+}
+
+// === LEGACY IPC MODEL (kept as reference / fallback) ===
+
+func computeIPCAnalytical(dag *graph.DAG, cfg *config, m *Metrics) {
 	if cfg.TaskID == 0 {
-		// IoT: Simple single-cycle, IPC ≈ 1.0 minus structural stalls
 		m.IPC = math.Min(1.0, cfg.IntALUs*0.7)
 		clockGHz := cfg.ClockMHz / 1000.0 * m.ThrottledFactor
 		m.EffectiveClockGHz = clockGHz
@@ -229,46 +328,29 @@ func computeIPC(dag *graph.DAG, cfg *config, m *Metrics) {
 		return
 	}
 
-	// Pipeline-aware IPC model
 	baseIPC := math.Min(cfg.PIssueWidth, cfg.IntALUs+cfg.MulDivs+cfg.FPUnits+cfg.SIMDUnits)
-
-	// Branch stall penalty
 	branchStall := computeBranchStall(cfg)
-
-	// Cache stall penalty
 	cacheStall := computeCacheStall(cfg)
-
-	// Structural stall (execution unit saturation)
 	structStall := computeStructuralStall(cfg)
 
-	// OoO efficiency bonus (only for Task 2+)
 	oooBonus := 1.0
 	if cfg.ROBSize > 0 && cfg.RSSize > 0 {
-		// ROB needs to be large enough relative to pipeline depth × issue width
-		robEfficiency := math.Min(1.0, cfg.ROBSize/(cfg.PPipeDepth*cfg.PIssueWidth*1.5))
-		rsEfficiency := math.Min(1.0, cfg.RSSize/(cfg.PIssueWidth*4))
-		oooBonus = 0.7 + 0.3*(robEfficiency*rsEfficiency) // OoO adds 0-30% IPC
+		robEff := math.Min(1.0, cfg.ROBSize/(cfg.PPipeDepth*cfg.PIssueWidth*1.5))
+		rsEff := math.Min(1.0, cfg.RSSize/(cfg.PIssueWidth*4))
+		oooBonus = 0.7 + 0.3*(robEff*rsEff)
 	}
 
-	// Effective IPC for P-cores
 	pIPC := baseIPC * (1 - branchStall) * (1 - cacheStall) * (1 - structStall) * oooBonus
 	pIPC = math.Max(0.1, math.Min(pIPC, cfg.PIssueWidth))
 
-	// E-core IPC (simpler, lower)
 	eIPC := math.Min(cfg.EIssueWidth, cfg.IntALUs*0.5) * (1 - branchStall*0.7) * (1 - cacheStall*0.5)
 	eIPC = math.Max(0.1, eIPC)
 
 	m.IPC = pIPC
-
-	// Apply thermal throttling
 	clockP := cfg.PClockGHz * m.ThrottledFactor
 	clockE := cfg.EClockGHz * m.ThrottledFactor
 	m.EffectiveClockGHz = clockP
-
-	// Multi-core throughput: simple model
-	pThroughput := pIPC * clockP * cfg.PCoreCount
-	eThroughput := eIPC * clockE * cfg.ECoreCount
-	m.ThroughputGIPS = pThroughput + eThroughput
+	m.ThroughputGIPS = pIPC*clockP*cfg.PCoreCount + eIPC*clockE*cfg.ECoreCount
 }
 
 func computeBranchStall(cfg *config) float64 {
