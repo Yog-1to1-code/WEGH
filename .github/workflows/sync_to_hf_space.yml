@@ -23,5 +23,5 @@ jobs:
             echo "Error: HF_TOKEN is empty! Make sure you added it exactly as 'HF_TOKEN' in Settings > Secrets and variables > Actions"
             exit 1
           fi
-          git remote add space https://WEGHTeam:$HF_TOKEN@huggingface.co/spaces/WEGHTeam/WEGH_Architecture
+          git remote add space https://YogeshMali:$HF_TOKEN@huggingface.co/spaces/YogeshMali/WEGH
           git push -f space main
