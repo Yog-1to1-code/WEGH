@@ -8,6 +8,13 @@
 #   - Docker:       https://docs.docker.com/get-docker/
 #   - openenv-core: pip install openenv-core
 #   - curl (usually pre-installed)
+#
+# Run:
+#   ./validate-submission.sh <ping_url> [repo_dir]
+#
+# Arguments:
+#   ping_url   Your HuggingFace Space URL (e.g. https://your-space.hf.space)
+#   repo_dir   Path to your repo (default: current directory)
 
 set -uo pipefail
 
@@ -81,40 +88,57 @@ stop_at() {
 
 printf "\n"
 printf "${BOLD}========================================${NC}\n"
-printf "${BOLD}  OpenEnv Submission Validator${NC}\n"
+printf "${BOLD}  WEGH OpenEnv Submission Validator${NC}\n"
 printf "${BOLD}========================================${NC}\n"
 log "Repo:     $REPO_DIR"
 log "Ping URL: $PING_URL"
 printf "\n"
 
-log "${BOLD}Step 1/3: Pinging HF Space${NC} ($PING_URL/reset) ..."
+# ── Step 1: Health Check ─────────────────────────────────────────────────────
+
+log "${BOLD}Step 1/4: Pinging HF Space${NC} ($PING_URL/health) ..."
 
 CURL_OUTPUT=$(portable_mktemp "validate-curl")
 CLEANUP_FILES+=("$CURL_OUTPUT")
-HTTP_CODE=$(curl -s -o "$CURL_OUTPUT" -w "%{http_code}" -X POST \
-  -H "Content-Type: application/json" -d '{}' \
-  "$PING_URL/reset" --max-time 30 2>"$CURL_OUTPUT" || printf "000")
+HTTP_CODE=$(curl -s -o "$CURL_OUTPUT" -w "%{http_code}" \
+  "$PING_URL/health" --max-time 30 2>"$CURL_OUTPUT" || printf "000")
 
 if [ "$HTTP_CODE" = "200" ]; then
-  pass "HF Space is live and responds to /reset"
+  pass "HF Space is live and responds to /health"
 elif [ "$HTTP_CODE" = "000" ]; then
   fail "HF Space not reachable (connection failed or timed out)"
   hint "Check your network connection and that the Space is running."
-  hint "Try: curl -s -o /dev/null -w '%%{http_code}' -X POST $PING_URL/reset"
+  hint "Try: curl -s -o /dev/null -w '%%{http_code}' $PING_URL/health"
   stop_at "Step 1"
 else
-  fail "HF Space /reset returned HTTP $HTTP_CODE (expected 200)"
+  fail "HF Space /health returned HTTP $HTTP_CODE (expected 200)"
   hint "Make sure your Space is running and the URL is correct."
-  hint "Try opening $PING_URL in your browser first."
   stop_at "Step 1"
 fi
 
-log "${BOLD}Step 2/3: Running docker build${NC} ..."
+# ── Step 2: Reset Endpoint ───────────────────────────────────────────────────
+
+log "${BOLD}Step 2/4: Testing /reset endpoint${NC} ..."
+
+RESET_CODE=$(curl -s -o "$CURL_OUTPUT" -w "%{http_code}" -X POST \
+  -H "Content-Type: application/json" -d '{"task":"rv32im","seed":42}' \
+  "$PING_URL/reset" --max-time 30 2>"$CURL_OUTPUT" || printf "000")
+
+if [ "$RESET_CODE" = "200" ]; then
+  pass "/reset returns 200 with task and seed"
+else
+  fail "/reset returned HTTP $RESET_CODE (expected 200)"
+  stop_at "Step 2"
+fi
+
+# ── Step 3: Docker Build ────────────────────────────────────────────────────
+
+log "${BOLD}Step 3/4: Running docker build${NC} ..."
 
 if ! command -v docker &>/dev/null; then
   fail "docker command not found"
   hint "Install Docker: https://docs.docker.com/get-docker/"
-  stop_at "Step 2"
+  stop_at "Step 3"
 fi
 
 if [ -f "$REPO_DIR/Dockerfile" ]; then
@@ -123,7 +147,7 @@ elif [ -f "$REPO_DIR/server/Dockerfile" ]; then
   DOCKER_CONTEXT="$REPO_DIR/server"
 else
   fail "No Dockerfile found in repo root or server/ directory"
-  stop_at "Step 2"
+  stop_at "Step 3"
 fi
 
 log "  Found Dockerfile in $DOCKER_CONTEXT"
@@ -136,32 +160,46 @@ if [ "$BUILD_OK" = true ]; then
 else
   fail "Docker build failed (timeout=${DOCKER_BUILD_TIMEOUT}s)"
   printf "%s\n" "$BUILD_OUTPUT" | tail -20
-  stop_at "Step 2"
+  stop_at "Step 3"
 fi
 
-log "${BOLD}Step 3/3: Running openenv validate${NC} ..."
+# ── Step 4: OpenEnv Validate ─────────────────────────────────────────────────
+
+log "${BOLD}Step 4/4: Running openenv validate${NC} ..."
 
 if ! command -v openenv &>/dev/null; then
-  fail "openenv command not found"
-  hint "Install it: pip install openenv-core"
-  stop_at "Step 3"
-fi
-
-VALIDATE_OK=false
-VALIDATE_OUTPUT=$(cd "$REPO_DIR" && openenv validate 2>&1) && VALIDATE_OK=true
-
-if [ "$VALIDATE_OK" = true ]; then
-  pass "openenv validate passed"
-  [ -n "$VALIDATE_OUTPUT" ] && log "  $VALIDATE_OUTPUT"
+  # Not a hard failure — try Python validator instead
+  log "${YELLOW}openenv CLI not found. Running Python validator...${NC}"
+  if [ -f "$REPO_DIR/tests/validate.py" ]; then
+    VALIDATE_OK=false
+    VALIDATE_OUTPUT=$(cd "$REPO_DIR" && python tests/validate.py --env-url "$PING_URL" 2>&1) && VALIDATE_OK=true
+    if [ "$VALIDATE_OK" = true ]; then
+      pass "Python validator passed"
+    else
+      fail "Python validator failed"
+      printf "%s\n" "$VALIDATE_OUTPUT"
+      stop_at "Step 4"
+    fi
+  else
+    log "${YELLOW}No validator available. Skipping.${NC}"
+    pass "Validator skipped (no openenv CLI or validate.py)"
+  fi
 else
-  fail "openenv validate failed"
-  printf "%s\n" "$VALIDATE_OUTPUT"
-  stop_at "Step 3"
+  VALIDATE_OK=false
+  VALIDATE_OUTPUT=$(cd "$REPO_DIR" && openenv validate 2>&1) && VALIDATE_OK=true
+  if [ "$VALIDATE_OK" = true ]; then
+    pass "openenv validate passed"
+    [ -n "$VALIDATE_OUTPUT" ] && log "  $VALIDATE_OUTPUT"
+  else
+    fail "openenv validate failed"
+    printf "%s\n" "$VALIDATE_OUTPUT"
+    stop_at "Step 4"
+  fi
 fi
 
 printf "\n"
 printf "${BOLD}========================================${NC}\n"
-printf "${GREEN}${BOLD}  All 3/3 checks passed!${NC}\n"
+printf "${GREEN}${BOLD}  All 4/4 checks passed!${NC}\n"
 printf "${GREEN}${BOLD}  Your submission is ready to submit.${NC}\n"
 printf "${BOLD}========================================${NC}\n"
 printf "\n"

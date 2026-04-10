@@ -2,11 +2,18 @@
 // Stage 2: IPC is computed via cycle-accurate pipeline simulation (internal/pipeline).
 // Power, Area, Thermal still use analytical models.
 // Speed target: < 500μs per evaluation (pipeline sim + analytical).
+//
+// Sources & Empirical Grounding:
+// - [Borkar1999] "Design challenges of technology scaling", IEEE Micro, 1999 (Power density limits scaling).
+// - [Skadron2003] "Temperature-aware microarchitecture", ISCA 2003 (HotSpot thermal RC-models).
+// - [McPAT2009] "McPAT: An integrated power, area, and timing modeling framework for multicore and manycore architectures", MICRO 2009.
+// - [Jacob2007] "Memory Systems: Cache, DRAM, Disk", 2007 (Cache area/power scaling heuristics).
+// - [AppleM1_2020] Apple M1 Architecture disclosures & AnandTech microarchitecture analysis (Heterogeneous P/E cores scheduling, ROB scaling).
 package simulator
-
 import (
 	"math"
 
+	cachepkg "github.com/wegh/engine/internal/cache"
 	"github.com/wegh/engine/internal/graph"
 	"github.com/wegh/engine/internal/pipeline"
 )
@@ -228,9 +235,8 @@ func extractConfig(dag *graph.DAG, taskID int) config {
 // generates a workload-representative instruction trace, and simulates
 // it cycle-by-cycle to produce real IPC numbers.
 //
-// This replaces the old analytical computeIPC which used formulas.
-// The simulation reveals real interactions between pipeline depth,
-// branch prediction, execution units, and register pressure.
+// Stage 2: Cycle-accurate pipeline simulation
+// Stage 3: Real cache hierarchy simulation for memory latency
 func computeIPCSimulated(cfg *config, m *Metrics) {
 	// Build pipeline configuration from DAG parameters
 	pCfg := pipeline.PipelineConfig{
@@ -258,12 +264,43 @@ func computeIPCSimulated(cfg *config, m *Metrics) {
 	traceCfg := pipeline.DefaultTraceConfig(cfg.TaskID)
 	trace := pipeline.GenerateTrace(traceCfg, traceSize, 42)
 
-	// Run cycle-accurate simulation for P-cores
+	// === Stage 3: Cache Hierarchy Simulation ===
+	// Build cache hierarchy from DAG config and compute avg memory latency.
+	cacheCfg := cachepkg.HierarchyConfig{
+		L1ISizeKB:   int(cfg.L1ISizeKB),
+		L1IAssoc:    int(cfg.L1IAssoc),
+		L1DSizeKB:   int(cfg.L1DSizeKB),
+		L1DAssoc:    int(cfg.L1DAssoc),
+		L2SizeKB:    int(cfg.L2SizeKB),
+		L2Assoc:     int(cfg.L2Assoc),
+		L3SizeMB:    int(cfg.L3SizeMB),
+		L3Assoc:     int(cfg.L3Assoc),
+		LineSize:    64,
+		DRAMLatency: 200,
+		PrefetchType: int(cfg.PrefetchType),
+	}
+	cacheHier := cachepkg.NewHierarchy(cacheCfg)
+
+	// Run the trace's memory addresses through the cache hierarchy
+	// to compute real hit rates and average memory latency.
+	for i := range trace {
+		if trace[i].IsMemory() {
+			addr := uint64(trace[i].MemAddr)
+			latency := cacheHier.AccessData(addr, trace[i].IsStore())
+			// Inject real cache latency into the instruction's execution time.
+			// Base load latency (1 cycle) is replaced by actual cache latency.
+			if latency > 1 {
+				trace[i].Latency = uint8(min(latency, 255))
+			}
+		}
+	}
+
+	// Run cycle-accurate simulation for P-cores (with real cache latencies injected)
 	engine := pipeline.NewEngine(pCfg)
 	result := engine.Simulate(trace, maxCycles)
 	pIPC := result.IPC
 
-	// E-core simulation (if present): simpler pipeline
+	// E-core simulation (if present): simpler pipeline, same cache
 	eIPC := 0.0
 	if cfg.ECoreCount > 0 && cfg.EIssueWidth > 0 {
 		eCfg := pipeline.PipelineConfig{
@@ -293,6 +330,13 @@ func computeIPCSimulated(cfg *config, m *Metrics) {
 	pThroughput := pIPC * clockP * cfg.PCoreCount
 	eThroughput := eIPC * clockE * cfg.ECoreCount
 	m.ThroughputGIPS = pThroughput + eThroughput
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // branchAccuracyFromConfig converts the DAG's branch predictor type

@@ -1,20 +1,58 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "wegh"
-version = "0.1.0"
-description = "WEGH: Workload Evaluation for Generative Hardware — RL Environment for AI-driven CPU design"
+version = "1.0.0"
+description = "WEGH: Workload Evaluation for Generative Hardware — an RL environment for AI-driven CPU microarchitecture design. Features a Go-native simulation engine with cycle-accurate pipeline modeling and analytical PPA heuristics."
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "WEGH Team"}
+]
+keywords = ["reinforcement-learning", "openenv", "cpu-architecture", "microarchitecture", "hardware-design"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 dependencies = [
-    "openenv-core[core]>=0.2.2",
     "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+    "openenv-core>=0.2.0"
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/meta-pytorch/OpenEnv"
+Repository = "https://github.com/meta-pytorch/OpenEnv"
 
 [project.scripts]
 server = "server.app:main"
+wegh-server = "server.app:main"
+wegh = "server.app:main"
 
+[tool.setuptools]
+packages = ["server"]

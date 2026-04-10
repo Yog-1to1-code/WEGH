@@ -1,0 +1,27 @@
+name: Sync to Hugging Face Space
+on:
+  push:
+    branches: [main]
+  # Enables you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - name: Push to hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "Error: HF_TOKEN is empty! Make sure you added it exactly as 'HF_TOKEN' in Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          git remote add space https://WEGHTeam:$HF_TOKEN@huggingface.co/spaces/WEGHTeam/WEGH_Architecture
+          git push -f space main

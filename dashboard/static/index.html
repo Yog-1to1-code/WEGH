@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WEGH | CPU Architecture Design Dashboard</title>
+  <meta name="description" content="Real-time visualization dashboard for the WEGH CPU microarchitecture design RL environment." />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-base: #0a0c12;
+      --bg-elevated: #10131c;
+      --bg-surface: #151924;
+      --bg-card: #181d2d;
+      --bg-card-hover: #1e2538;
+      --bg-inset: #121620;
+      --bg-overlay: rgba(10, 12, 18, 0.92);
+      --border-subtle: rgba(255,255,255,0.04);
+      --border-default: rgba(255,255,255,0.06);
+      --border-hover: rgba(255,255,255,0.10);
+      --text-primary: #e8ecf4;
+      --text-secondary: #8a94a8;
+      --text-tertiary: #5a6478;
+      --text-muted: #3d4558;
+      --accent-blue: #5b9cf6;
+      --accent-green: #4ade80;
+      --accent-amber: #f5a623;
+      --accent-red: #f06e6e;
+      --accent-purple: #a78bfa;
+      --accent-cyan: #34d4e4;
+      --accent-orange: #fb923c;
+      --grad-blue: linear-gradient(135deg, #5b9cf6 0%, #818cf8 100%);
+      --grad-green: linear-gradient(135deg, #4ade80 0%, #34d4e4 100%);
+      --grad-amber: linear-gradient(135deg, #f5a623 0%, #fb923c 100%);
+      --grad-red: linear-gradient(135deg, #f06e6e 0%, #fb7185 100%);
+      --grad-purple: linear-gradient(135deg, #a78bfa 0%, #818cf8 100%);
+      --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-pill: 9999px;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --duration-base: 250ms;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+      line-height: 1.5;
+    }
+    body::before {
+      content: '';
+      position: fixed; top: -30%; left: -10%;
+      width: 60%; height: 60%;
+      background: radial-gradient(circle, rgba(91,156,246,0.04) 0%, transparent 65%);
+      pointer-events: none; z-index: 0;
+    }
+    body::after {
+      content: '';
+      position: fixed; bottom: -20%; right: -10%;
+      width: 50%; height: 50%;
+      background: radial-gradient(circle, rgba(167,139,250,0.03) 0%, transparent 65%);
+      pointer-events: none; z-index: 0;
+    }
+
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--bg-overlay);
+      backdrop-filter: blur(24px) saturate(1.2);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 1.75rem; height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .logo { display: flex; align-items: center; gap: 12px; }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: var(--grad-blue);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 800; color: white;
+      box-shadow: 0 2px 12px rgba(91,156,246,0.25);
+    }
+    .logo-text { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.5px; }
+    .logo-text span { background: var(--grad-blue); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .logo-tag {
+      font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 1.5px; color: var(--text-tertiary);
+      padding: 2px 8px; border: 1px solid var(--border-default);
+      border-radius: var(--radius-pill); margin-left: 4px;
+    }
+    .header-right { display: flex; align-items: center; gap: 1rem; }
+    .task-badge {
+      padding: 5px 14px; border-radius: var(--radius-pill);
+      font-size: 0.72rem; font-weight: 600;
+      background: rgba(91,156,246,0.10);
+      border: 1px solid rgba(91,156,246,0.15);
+      color: var(--accent-blue);
+    }
+    .status-indicator {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 14px; border-radius: var(--radius-pill);
+      background: rgba(74,222,128,0.08);
+      border: 1px solid rgba(74,222,128,0.12);
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--accent-green);
+      box-shadow: 0 0 8px rgba(74,222,128,0.5);
+      animation: pulse 2.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; } 50% { opacity: 0.5; }
+    }
+    .status-label {
+      font-size: 0.72rem; font-weight: 600; color: var(--accent-green);
+      letter-spacing: 0.5px; text-transform: uppercase;
+    }
+
+    .kpi-strip {
+      position: relative; z-index: 1;
+      display: grid; grid-template-columns: repeat(7, 1fr);
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    @media (max-width: 1100px) { .kpi-strip { grid-template-columns: repeat(4, 1fr); } }
+    @media (max-width: 640px) { .kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+    .kpi {
+      padding: 1rem 1.25rem;
+      border-right: 1px solid var(--border-subtle);
+      transition: background var(--duration-base); cursor: default; position: relative;
+    }
+    .kpi:last-child { border-right: none; }
+    .kpi:hover { background: var(--bg-surface); }
+    .kpi-label {
+      font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 1px; color: var(--text-tertiary); margin-bottom: 4px;
+    }
+    .kpi-value {
+      font-family: var(--font-mono); font-size: 1.35rem;
+      font-weight: 600; color: var(--text-primary); line-height: 1.2;
+    }
+    .kpi-value.good { color: var(--accent-green); }
+    .kpi-value.warn { color: var(--accent-amber); }
+    .kpi-value.bad { color: var(--accent-red); }
+    .kpi-unit { font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px; }
+
+    main {
+      position: relative; z-index: 1;
+      max-width: 1560px; margin: 0 auto; padding: 1.25rem;
+      display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem;
+    }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg); padding: 1.25rem;
+      transition: all var(--duration-base) var(--ease-out);
+      position: relative; overflow: hidden;
+      animation: fadeInUp 0.5s var(--ease-out) both;
+    }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%);
+    }
+    .card:hover {
+      border-color: var(--border-hover);
+      background: var(--bg-card-hover);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transform: translateY(-1px);
+    }
+    @keyframes fadeInUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    .card:nth-child(1){animation-delay:.05s} .card:nth-child(2){animation-delay:.1s}
+    .card:nth-child(3){animation-delay:.15s} .card:nth-child(4){animation-delay:.2s}
+    .card:nth-child(5){animation-delay:.25s} .card:nth-child(6){animation-delay:.3s}
+
+    .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .card-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.8px; color: var(--text-secondary);
+    }
+    .card-title .icon-wrap {
+      width: 28px; height: 28px; border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center; font-size: 14px;
+    }
+    .icon-wrap.blue { background: rgba(91,156,246,0.12); color: var(--accent-blue); }
+    .icon-wrap.green { background: rgba(74,222,128,0.12); color: var(--accent-green); }
+    .icon-wrap.amber { background: rgba(245,166,35,0.12); color: var(--accent-amber); }
+    .icon-wrap.red { background: rgba(240,110,110,0.12); color: var(--accent-red); }
+    .icon-wrap.purple { background: rgba(167,139,250,0.12); color: var(--accent-purple); }
+    .icon-wrap.cyan { background: rgba(52,212,228,0.12); color: var(--accent-cyan); }
+
+    .col-12 { grid-column: span 12; }
+    .col-8 { grid-column: span 8; }
+    .col-6 { grid-column: span 6; }
+    .col-4 { grid-column: span 4; }
+    .col-3 { grid-column: span 3; }
+    @media (max-width: 1200px) { .col-8,.col-6 { grid-column: span 12; } .col-4,.col-3 { grid-column: span 6; } }
+    @media (max-width: 768px) { .col-3,.col-4 { grid-column: span 12; } }
+
+    .chart-wrap { position: relative; height: 200px; }
+    .chart-wrap.tall { height: 260px; }
+
+    .controls-grid { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      padding: 9px 18px; border-radius: var(--radius-md);
+      border: 1px solid var(--border-default); background: var(--bg-surface);
+      color: var(--text-secondary); font-size: 0.78rem; font-weight: 600;
+      font-family: var(--font-sans); cursor: pointer;
+      transition: all var(--duration-base) var(--ease-out);
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { background: var(--bg-card-hover); border-color: var(--border-hover); color: var(--text-primary); transform: translateY(-1px); }
+    .btn.primary { background: var(--grad-blue); border: none; color: white; box-shadow: 0 2px 12px rgba(91,156,246,0.20); }
+    .btn.primary:hover { box-shadow: 0 4px 20px rgba(91,156,246,0.30); transform: translateY(-2px); }
+    select.form-select {
+      padding: 9px 14px; background: var(--bg-surface);
+      border: 1px solid var(--border-default); border-radius: var(--radius-md);
+      color: var(--text-secondary); font-size: 0.78rem; font-weight: 500;
+      font-family: var(--font-sans); cursor: pointer; appearance: none;
+      padding-right: 30px;
+    }
+    .grade-result {
+      font-family: var(--font-mono); font-size: 0.82rem; font-weight: 600;
+      padding: 5px 14px; border-radius: var(--radius-pill);
+      background: rgba(74,222,128,0.08); color: var(--accent-green);
+      display: none;
+    }
+    .grade-result.show { display: inline-flex; }
+
+    .component-list { max-height: 200px; overflow-y: auto; }
+    .component-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 10px; border-radius: var(--radius-sm);
+      font-size: 0.75rem; transition: background 0.15s;
+    }
+    .component-item:hover { background: rgba(255,255,255,0.03); }
+    .component-item .name { font-weight: 600; color: var(--text-secondary); }
+    .component-item .type { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-tertiary); }
+
+    footer {
+      position: relative; z-index: 1;
+      text-align: center; padding: 1.5rem;
+      color: var(--text-muted); font-size: 0.7rem;
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-elevated);
+    }
+    footer a { color: var(--text-tertiary); text-decoration: none; }
+    footer a:hover { color: var(--accent-blue); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">W</div>
+    <div class="logo-text"><span>WEGH</span> Dashboard</div>
+    <span class="logo-tag">v1.0</span>
+  </div>
+  <div class="header-right">
+    <div class="task-badge" id="taskBadge">Task: —</div>
+    <div class="status-indicator">
+      <div class="status-dot"></div>
+      <span class="status-label">Live</span>
+    </div>
+  </div>
+</header>
+
+<div class="kpi-strip">
+  <div class="kpi">
+    <div class="kpi-label">IPC</div>
+    <div class="kpi-value" id="kpiIpc">—</div>
+    <div class="kpi-unit">instr/cycle</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Throughput</div>
+    <div class="kpi-value" id="kpiThroughput">—</div>
+    <div class="kpi-unit">GIPS</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Power</div>
+    <div class="kpi-value" id="kpiPower">—</div>
+    <div class="kpi-unit">mW</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Area</div>
+    <div class="kpi-value" id="kpiArea">—</div>
+    <div class="kpi-unit">mm²</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Power Density</div>
+    <div class="kpi-value" id="kpiPD">—</div>
+    <div class="kpi-unit">W/mm²</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Temperature</div>
+    <div class="kpi-value" id="kpiTemp">—</div>
+    <div class="kpi-unit">°C</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Step</div>
+    <div class="kpi-value" id="kpiStep">—</div>
+    <div class="kpi-unit">of max</div>
+  </div>
+</div>
+
+<main>
+  <!-- Controls -->
+  <div class="card col-12" style="animation-delay:0s">
+    <div class="card-header">
+      <div class="card-title"><div class="icon-wrap blue">⚡</div>Controls</div>
+      <div class="grade-result" id="gradeResult">Score: —</div>
+    </div>
+    <div class="controls-grid">
+      <select class="form-select" id="taskSelect">
+        <option value="iot_8bit">Task 0: IoT 8-bit</option>
+        <option value="rv32im" selected>Task 1: RV32IM</option>
+        <option value="mseries_superscalar">Task 2: M-Series</option>
+      </select>
+      <button class="btn primary" onclick="doReset()">↻ Reset</button>
+      <button class="btn" onclick="doStep()">→ Step</button>
+      <button class="btn" onclick="doAutoRun()">▶ Auto-Run</button>
+      <button class="btn" onclick="doGrade()">★ Grade</button>
+    </div>
+  </div>
+
+  <!-- IPC Chart -->
+  <div class="card col-8">
+    <div class="card-header">
+      <div class="card-title"><div class="icon-wrap green">📈</div>PPA Metrics Over Time</div>
+    </div>
+    <div class="chart-wrap tall"><canvas id="ppaChart"></canvas></div>
+  </div>
+
+  <!-- Components -->
+  <div class="card col-4">
+    <div class="card-header">
+      <div class="card-title"><div class="icon-wrap purple">🔧</div>Active Components</div>
+    </div>
+    <div class="component-list" id="componentList">
+      <div style="text-align:center;color:var(--text-muted);padding:2rem;font-size:0.8rem;">
+        Click Reset to start
+      </div>
+    </div>
+  </div>
+
+  <!-- Reward Chart -->
+  <div class="card col-6">
+    <div class="card-header">
+      <div class="card-title"><div class="icon-wrap amber">🏆</div>Reward History</div>
+    </div>
+    <div class="chart-wrap"><canvas id="rewardChart"></canvas></div>
+  </div>
+
+  <!-- Thermal Chart -->
+  <div class="card col-6">
+    <div class="card-header">
+      <div class="card-title"><div class="icon-wrap red">🌡️</div>Thermal & Throttle</div>
+    </div>
+    <div class="chart-wrap"><canvas id="thermalChart"></canvas></div>
+  </div>
+
+  <!-- Feedback -->
+  <div class="card col-12">
+    <div class="card-header">
+      <div class="card-title"><div class="icon-wrap cyan">💬</div>Engine Feedback</div>
+    </div>
+    <div id="feedbackText" style="font-family:var(--font-mono);font-size:0.78rem;color:var(--text-secondary);max-height:120px;overflow-y:auto;white-space:pre-wrap;">
+      Ready. Select a task and click Reset.
+    </div>
+  </div>
+</main>
+
+<footer>
+  WEGH — Workload Evaluation for Generative Hardware | <a href="https://github.com/meta-pytorch/OpenEnv">OpenEnv Framework</a>
+</footer>
+
+<script>
+const API = window.location.port === '7861' ? '/api' : '';
+
+// Chart setup
+const chartColors = {
+  blue: 'rgba(91,156,246,0.9)', green: 'rgba(74,222,128,0.9)',
+  amber: 'rgba(245,166,35,0.9)', red: 'rgba(240,110,110,0.9)',
+  purple: 'rgba(167,139,250,0.9)', cyan: 'rgba(52,212,228,0.9)',
+};
+const chartBg = {
+  blue: 'rgba(91,156,246,0.1)', green: 'rgba(74,222,128,0.1)',
+  amber: 'rgba(245,166,35,0.1)', red: 'rgba(240,110,110,0.1)',
+};
+
+Chart.defaults.color = '#5a6478';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.04)';
+Chart.defaults.font.family = "'Inter', sans-serif";
+
+const ppaChart = new Chart(document.getElementById('ppaChart'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      {label:'IPC', data:[], borderColor:chartColors.blue, backgroundColor:chartBg.blue, fill:true, tension:0.3, pointRadius:2},
+      {label:'Power (W)', data:[], borderColor:chartColors.amber, backgroundColor:chartBg.amber, fill:true, tension:0.3, pointRadius:2},
+      {label:'Area (mm²)', data:[], borderColor:chartColors.green, backgroundColor:chartBg.green, fill:true, tension:0.3, pointRadius:2},
+    ]
+  },
+  options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{display:true,position:'top',labels:{boxWidth:12,padding:16,font:{size:11}}}}, scales:{x:{display:true,title:{display:true,text:'Step'}},y:{display:true}}}
+});
+
+const rewardChart = new Chart(document.getElementById('rewardChart'), {
+  type: 'bar',
+  data: { labels:[], datasets:[{label:'Reward', data:[], backgroundColor:chartColors.green, borderRadius:4}] },
+  options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{title:{display:true,text:'Step'}},y:{title:{display:true,text:'Reward'}}}}
+});
+
+const thermalChart = new Chart(document.getElementById('thermalChart'), {
+  type: 'line',
+  data: {
+    labels:[],
+    datasets: [
+      {label:'Temp (°C)', data:[], borderColor:chartColors.red, backgroundColor:chartBg.red, fill:true, tension:0.3, pointRadius:2},
+      {label:'Throttle', data:[], borderColor:chartColors.purple, tension:0.3, pointRadius:2, yAxisID:'y1'},
+    ]
+  },
+  options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{display:true,position:'top',labels:{boxWidth:12,padding:16,font:{size:11}}}}, scales:{y:{position:'left'},y1:{position:'right',min:0,max:1,grid:{display:false}}}}
+});
+
+let stepNum = 0;
+let autoRunInterval = null;
+
+function updateKPIs(obs) {
+  const el = (id) => document.getElementById(id);
+  el('kpiIpc').textContent = (obs.current_estimated_ipc || 0).toFixed(3);
+  el('kpiThroughput').textContent = (obs.throughput_gips || 0).toFixed(2);
+  el('kpiPower').textContent = (obs.total_power_mw || 0).toFixed(1);
+  el('kpiArea').textContent = (obs.total_area_mm2 || 0).toFixed(3);
+  el('kpiPD').textContent = (obs.max_power_density || 0).toFixed(2);
+  el('kpiTemp').textContent = (obs.thermal_celsius || 0).toFixed(1);
+  el('kpiStep').textContent = `${obs.step_number || 0}/${obs.max_steps || 30}`;
+
+  // Color coding
+  const pd = obs.max_power_density || 0;
+  el('kpiPD').className = 'kpi-value ' + (pd > 1.3 ? 'bad' : pd > 0.8 ? 'warn' : 'good');
+  const temp = obs.thermal_celsius || 0;
+  el('kpiTemp').className = 'kpi-value ' + (temp > 90 ? 'bad' : temp > 70 ? 'warn' : 'good');
+}
+
+function updateCharts(obs, reward) {
+  stepNum++;
+  const label = stepNum.toString();
+
+  ppaChart.data.labels.push(label);
+  ppaChart.data.datasets[0].data.push(obs.current_estimated_ipc || 0);
+  ppaChart.data.datasets[1].data.push((obs.total_power_mw || 0) / 1000);
+  ppaChart.data.datasets[2].data.push(obs.total_area_mm2 || 0);
+  ppaChart.update('none');
+
+  rewardChart.data.labels.push(label);
+  rewardChart.data.datasets[0].data.push(reward || 0);
+  rewardChart.update('none');
+
+  thermalChart.data.labels.push(label);
+  thermalChart.data.datasets[0].data.push(obs.thermal_celsius || 0);
+  thermalChart.data.datasets[1].data.push(obs.throttled_factor || 1);
+  thermalChart.update('none');
+}
+
+function updateComponents(obs) {
+  const list = document.getElementById('componentList');
+  try {
+    const comps = JSON.parse(obs.active_components || '[]');
+    if (comps.length === 0) {
+      list.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:1rem;font-size:0.8rem;">No components</div>';
+      return;
+    }
+    list.innerHTML = comps.map(c => `<div class="component-item"><span class="name">${typeof c === 'string' ? c : c.id || c}</span></div>`).join('');
+  } catch {
+    list.innerHTML = `<div class="component-item"><span class="name">${obs.active_components}</span></div>`;
+  }
+}
+
+function clearCharts() {
+  stepNum = 0;
+  [ppaChart, rewardChart, thermalChart].forEach(c => {
+    c.data.labels = [];
+    c.data.datasets.forEach(d => d.data = []);
+    c.update('none');
+  });
+}
+
+async function doReset() {
+  if (autoRunInterval) { clearInterval(autoRunInterval); autoRunInterval = null; }
+  clearCharts();
+  const task = document.getElementById('taskSelect').value;
+  document.getElementById('taskBadge').textContent = `Task: ${task}`;
+  document.getElementById('gradeResult').classList.remove('show');
+
+  try {
+    const r = await fetch(`${API}/reset`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task, seed:42})});
+    const data = await r.json();
+    const obs = data.observation || data.initial_metrics || {};
+    updateKPIs(obs);
+    updateComponents(obs);
+    document.getElementById('feedbackText').textContent = `Episode reset. Task: ${task}. Ready.`;
+  } catch (e) {
+    document.getElementById('feedbackText').textContent = `Error: ${e.message}`;
+  }
+}
+
+async function doStep() {
+  const action = {action:{type:'resize',component:'l1d',param_name:'size_kb',value:32}};
+  try {
+    const r = await fetch(`${API}/step`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(action)});
+    const data = await r.json();
+    const obs = data.observation || {};
+    updateKPIs(obs);
+    updateCharts(obs, data.reward || 0);
+    updateComponents(obs);
+    document.getElementById('feedbackText').textContent = obs.feedback_string || `Step ${stepNum}: reward=${(data.reward||0).toFixed(4)}`;
+    if (data.done) {
+      document.getElementById('feedbackText').textContent += '\n\n✅ Episode complete! Click Grade to see score.';
+      if (autoRunInterval) { clearInterval(autoRunInterval); autoRunInterval = null; }
+    }
+  } catch (e) {
+    document.getElementById('feedbackText').textContent = `Error: ${e.message}`;
+  }
+}
+
+function doAutoRun() {
+  if (autoRunInterval) {
+    clearInterval(autoRunInterval);
+    autoRunInterval = null;
+    return;
+  }
+  autoRunInterval = setInterval(doStep, 300);
+}
+
+async function doGrade() {
+  try {
+    const r = await fetch(`${API}/grade`);
+    const data = await r.json();
+    const el = document.getElementById('gradeResult');
+    el.textContent = `Score: ${(data.score || 0).toFixed(4)}`;
+    el.classList.add('show');
+    const subs = data.sub_scores || {};
+    const subStr = Object.entries(subs).map(([k,v]) => `${k}: ${v.toFixed(3)}`).join(', ');
+    document.getElementById('feedbackText').textContent = `Grade: ${(data.score||0).toFixed(4)}\nSub-scores: ${subStr}\nExploit: ${data.exploit_detected ? 'YES' : 'no'}`;
+  } catch (e) {
+    document.getElementById('feedbackText').textContent = `Error: ${e.message}`;
+  }
+}
+
+// Initial health check
+fetch(`${API}/health`).then(r => r.json()).then(d => {
+  if (d.status === 'ok') {
+    document.getElementById('feedbackText').textContent = 'Server connected. Select a task and click Reset.';
+  }
+}).catch(() => {
+  document.getElementById('feedbackText').textContent = 'Server not reachable. Start the Go engine first.';
+  document.querySelector('.status-label').textContent = 'OFFLINE';
+  document.querySelector('.status-dot').style.background = 'var(--accent-red)';
+});
+</script>
+
+</body>
+</html>

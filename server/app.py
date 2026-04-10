@@ -1,40 +1,56 @@
-# WEGH — FastAPI Application
-# Creates the OpenEnv-compliant FastAPI app using create_app helper.
+# WEGH — Python Server Entry Point
+# The Go engine serves all OpenEnv endpoints directly.
+# This module provides the Python entry point required by pyproject.toml [project.scripts]
+# and handles binary discovery + fallback.
 
-import argparse
-
-try:
-    from openenv.core.env_server.http_server import create_app
-except ImportError:
-    from openenv.core.env_server import create_fastapi_app as create_app
-
-try:
-    from ..models import CPUAction, CPUObservation
-    from .wegh_env import WEGHEnvironment
-except (ModuleNotFoundError, ImportError):
-    from models import CPUAction, CPUObservation
-    from server.wegh_env import WEGHEnvironment
-
-
-app = create_app(
-    WEGHEnvironment,
-    CPUAction,
-    CPUObservation,
-    env_name="wegh",
-    max_concurrent_envs=1,
-)
+import os
+import subprocess
+import sys
 
 
 def main():
-    """Entry point for: uv run --project . server"""
-    import uvicorn
+    """Start the WEGH Go environment server."""
+    port = os.getenv("PORT", "7860")
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
+    # Binary search paths (Docker → local)
+    binary_paths = [
+        "/app/go-engine",              # Docker path
+        os.path.join(os.getcwd(), "go-engine"),   # Local
+        os.path.join(os.getcwd(), "engine", "go-engine"),  # Dev layout
+        "./go-engine",
+    ]
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    binary = None
+    for path in binary_paths:
+        if os.path.exists(path):
+            binary = path
+            break
+
+    if binary:
+        print(f"[WEGH] Starting Go server on port {port}", flush=True)
+        os.execv(binary, [binary, f"--bind=0.0.0.0:{port}"])
+    else:
+        # Fallback: try go run for development
+        print(f"[WEGH] Binary not found, trying go run ...", flush=True)
+        go_src = os.path.join(os.getcwd(), "engine", "cmd", "server")
+        if not os.path.exists(go_src):
+            go_src = os.path.join(os.getcwd(), "cmd", "server")
+
+        try:
+            proc = subprocess.run(
+                ["go", "run", "."],
+                cwd=go_src,
+                env={**os.environ, "PORT": port}
+            )
+            sys.exit(proc.returncode)
+        except FileNotFoundError:
+            print(
+                "[WEGH] ERROR: Neither compiled binary nor 'go' found.\n"
+                "Build with: cd engine && go build -o go-engine ./cmd/server\n"
+                "Or run in Docker: docker build -t wegh . && docker run -p 7860:7860 wegh",
+                file=sys.stderr
+            )
+            sys.exit(1)
 
 
 if __name__ == "__main__":

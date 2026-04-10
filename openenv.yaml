@@ -1,26 +1,233 @@
-spec_version: 1
 name: wegh
-version: "1.0.0"
-description: "WEGH: Macro-Architectural CPU Designer enforcing strict PPA heuristics via RL."
-author: "WEGH Team"
-type: space
-runtime: fastapi
-app: server.app:app
-port: 8000
+version: 1.0.0
+description: |
+  WEGH: Workload Evaluation for Generative Hardware.
+  An RL environment where AI agents learn to design CPU microarchitectures —
+  from IoT microcontrollers to Apple M-series superscalar processors.
+  Features a Go-native simulation engine with DAG-based CPU component modeling,
+  topological validation, and analytical PPA (Power, Performance, Area) heuristics.
+
+author: WEGH Team
 tags:
-  - cpu-design
+  - openenv
   - reinforcement-learning
-reward_range: [0.0, 1.0]
+  - cpu-design
+  - hardware-architecture
+  - continuous-control
+
+server:
+  host: "0.0.0.0"
+  port: 7860
+  protocol: http
+
+schemas:
+  observation:
+    type: object
+    properties:
+      current_estimated_ipc:
+        type: number
+        description: "Current estimated Instructions Per Clock (IPC) of the CPU design"
+      throughput_gips:
+        type: number
+        description: "Throughput in Giga-Instructions Per Second (GIPS)"
+      effective_clock_ghz:
+        type: number
+        description: "Effective clock frequency in GHz (after throttling)"
+      total_power_mw:
+        type: number
+        minimum: 0
+        description: "Total power consumption in milliwatts"
+      total_area_mm2:
+        type: number
+        minimum: 0
+        description: "Total die area in square millimeters (7nm process)"
+      max_power_density:
+        type: number
+        minimum: 0
+        description: "Maximum component power density in W/mm²"
+      thermal_celsius:
+        type: number
+        description: "Junction temperature in degrees Celsius"
+      hotspot_count:
+        type: integer
+        minimum: 0
+        description: "Number of thermal hotspot components exceeding safe power density"
+      throttled_factor:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+        description: "Clock throttling factor (1.0 = no throttling, 0.3 = aggressive throttling)"
+      perf_per_watt:
+        type: number
+        minimum: 0
+        description: "Performance-per-watt efficiency metric (GIPS/W)"
+      active_components:
+        type: string
+        description: "JSON-encoded list of active component IDs in the microarchitecture DAG"
+      component_count:
+        type: integer
+        minimum: 0
+        description: "Number of active components in the design"
+      connection_count:
+        type: integer
+        minimum: 0
+        description: "Number of directed edges (data/control paths) in the DAG"
+      task_id:
+        type: integer
+        minimum: 0
+        maximum: 2
+        description: "Current task identifier (0=IoT, 1=RV32IM, 2=M-Series)"
+      task_name:
+        type: string
+        description: "Human-readable task name"
+      task_constraints:
+        type: string
+        description: "Human-readable constraint description for the current task"
+      step_number:
+        type: integer
+        minimum: 0
+        description: "Current step within the episode"
+      max_steps:
+        type: integer
+        description: "Maximum steps allowed for this task"
+      cumulative_reward:
+        type: number
+        description: "Sum of all per-step rewards so far in this episode"
+      feedback_string:
+        type: string
+        description: "LLM-readable engineering feedback explaining PPA impact of last action"
+      final_score:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+        description: "Normalized final score (only meaningful when done=true)"
+
+  action:
+    type: object
+    required:
+      - action_type
+      - target_component
+    properties:
+      action_type:
+        type: string
+        enum: ["resize", "add_component", "remove_component", "connect", "configure"]
+        description: "Type of architectural modification to perform"
+      target_component:
+        type: string
+        description: "Component ID to target (e.g., 'l1d', 'alu', 'pcore', 'rob')"
+      parameter_name:
+        type: string
+        description: "Parameter to modify (e.g., 'size_kb', 'count', 'pipeline_depth')"
+      parameter_value:
+        type: number
+        description: "New parameter value (clamped to valid bounds by the engine)"
+      source_node:
+        type: string
+        description: "Source component for 'connect' actions"
+      target_node:
+        type: string
+        description: "Destination component for 'connect' actions"
+      reasoning:
+        type: string
+        description: "Agent's reasoning for this action (logged, not evaluated)"
+
+  reward:
+    type: number
+    description: >
+      Dense per-step reward signal. Not bounded to [0,1] — fluctuates based on
+      action validity, constraint compliance, PPA improvements, and multi-objective
+      Pareto progress. Final episode scores are bounded to (0.0, 1.0) exclusive.
+
 tasks:
   - id: iot_8bit
-    name: IoT 8-Bit Core
+    name: "8-Bit IoT Microcontroller"
+    description: "Design a minimal 8-bit microcontroller for IoT sensors. Focus on ultra-low power. Battery-powered with no active cooling."
     difficulty: easy
-    grader: wegh_graders:grade_iot_8bit
+    max_steps: 20
+    weights:
+      power: 0.60
+      throughput: 0.20
+      area: 0.15
+      thermal: 0.05
+
   - id: rv32im
-    name: Embedded RV32IM
+    name: "RV32IM 5-Stage Pipelined Core"
+    description: "Design a RISC-V RV32IM core with a classic 5-stage pipeline. Maximize IPC within die area budget of 10mm² at 7nm."
     difficulty: medium
-    grader: wegh_graders:grade_rv32im
+    max_steps: 30
+    weights:
+      ipc: 0.50
+      area: 0.30
+      power: 0.15
+      thermal: 0.05
+
   - id: mseries_superscalar
-    name: M-Series Superscalar
+    name: "M-Series Heterogeneous Superscalar"
+    description: "Design an Apple M-series inspired heterogeneous CPU with P-cores and E-cores. Power density must stay below 1.5 W/mm² to avoid throttling."
     difficulty: hard
-    grader: wegh_graders:grade_mseries_superscalar
+    max_steps: 40
+    weights:
+      throughput: 0.35
+      efficiency: 0.25
+      thermal: 0.25
+      area: 0.15
+
+
+endpoints:
+  health:
+    path: /health
+    method: GET
+  ping:
+    path: /ping
+    method: GET
+  reset:
+    path: /reset
+    method: POST
+  step:
+    path: /step
+    method: POST
+  state:
+    path: /state
+    method: GET
+  grade:
+    path: /grade
+    method: GET
+  tasks:
+    path: /tasks
+    method: GET
+  metrics:
+    path: /metrics
+    method: GET
+  replay:
+    path: /replay
+    method: GET
+
+graders:
+  - id: grade_iot_8bit
+    type: deterministic
+    implementation: wegh_graders.py
+    description: "Evaluates IoT 8-bit constraints using OpenEnv Go simulation engine"
+    deterministic: true
+    score_range: [0.001, 0.999]
+    
+  - id: grade_rv32im
+    type: deterministic
+    implementation: wegh_graders.py
+    description: "Evaluates RV32IM core architecture using OpenEnv Go simulation engine"
+    deterministic: true
+    score_range: [0.001, 0.999]
+    
+  - id: grade_mseries_superscalar
+    type: deterministic
+    implementation: wegh_graders.py
+    description: "Evaluates M-Series Apple superscalar constraints using OpenEnv Go simulation engine"
+    deterministic: true
+    score_range: [0.001, 0.999]
+
+baseline:
+  script: inference.py
+  description: "LLM heuristic agent executing tasks via OpenAI-compatible endpoints."
+  expected_scores:
+    iot_8bit: 0.723
+    rv32im: 0.651
+    mseries_superscalar: 0.589

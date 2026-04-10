@@ -1,6 +1,6 @@
 # WEGH — Core Environment (OpenEnv Server)
-# Inherits from openenv.core.env_server.Environment
 # Bridges the OpenEnv API to the Go simulation daemon.
+# Uses openenv-core base class if available, falls back to plain class.
 
 import json
 import logging
@@ -10,9 +10,19 @@ import contextlib
 import subprocess
 import os
 import atexit
-from typing import Any, Optional
+from typing import Any, Optional, Generic, TypeVar
 
-from openenv.core.env_server import Environment
+try:
+    from openenv.core.env_server import Environment as _EnvBase
+except (ImportError, ModuleNotFoundError):
+    # Fallback: define a minimal base class when openenv-core is not installed
+    _A = TypeVar('_A')
+    _O = TypeVar('_O')
+    _S = TypeVar('_S')
+    class _EnvBase(Generic[_A, _O, _S]):
+        """Minimal fallback base when openenv-core is not installed."""
+        pass
+
 from models import CPUAction, CPUObservation, CPUState
 from server.go_client import GoEngineClient
 from server.task_configs import get_task, get_task_config_for_go

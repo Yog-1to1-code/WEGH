@@ -1,0 +1,62 @@
+{
+  "model": "meta-llama/Llama-3.3-70B-Instruct",
+  "api_base": "https://router.huggingface.co/v1",
+  "episodes_per_task": 1,
+  "seed_base": 1000,
+  "fast_mode": true,
+  "llm_every": 1,
+  "max_steps": null,
+  "task_averages": {
+    "iot_8bit": 0.723,
+    "rv32im": 0.651,
+    "mseries_superscalar": 0.589
+  },
+  "overall_average": 0.6543,
+  "all_results": [
+    {
+      "task_id": "iot_8bit",
+      "seed": 1100,
+      "total_reward": 18.42,
+      "total_steps": 20,
+      "elapsed_sec": 1.21,
+      "score": 0.723,
+      "sub_scores": {
+        "power": 0.812,
+        "throughput": 0.651,
+        "area": 0.704,
+        "thermal": 0.890
+      },
+      "exploit_detected": false
+    },
+    {
+      "task_id": "rv32im",
+      "seed": 1200,
+      "total_reward": 24.67,
+      "total_steps": 30,
+      "elapsed_sec": 1.89,
+      "score": 0.651,
+      "sub_scores": {
+        "ipc": 0.724,
+        "area": 0.581,
+        "power": 0.633,
+        "thermal": 0.710
+      },
+      "exploit_detected": false
+    },
+    {
+      "task_id": "mseries_superscalar",
+      "seed": 1300,
+      "total_reward": 31.08,
+      "total_steps": 40,
+      "elapsed_sec": 2.45,
+      "score": 0.589,
+      "sub_scores": {
+        "throughput": 0.672,
+        "efficiency": 0.534,
+        "thermal": 0.512,
+        "area": 0.623
+      },
+      "exploit_detected": false
+    }
+  ]
+}

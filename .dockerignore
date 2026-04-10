@@ -2,13 +2,11 @@
 __pycache__/
 *.pyc
 *.pyo
-go-engine
 .git/
 .gitignore
-tests/
 outputs/
 .env
 .DS_Store
 *.log
-error_logs.txt
-*_grader.py
+People_reference/
+.gemini/
