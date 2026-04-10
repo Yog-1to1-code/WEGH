@@ -43,35 +43,7 @@ COPY server/ ./server/
 COPY dashboard/ ./dashboard/
 
 # Supervisord config (Go server + Dashboard)
-RUN cat > /etc/supervisor/conf.d/wegh.conf << 'EOF'
-[unix_http_server]
-file=/tmp/supervisor.sock
-
-[supervisord]
-nodaemon=true
-pidfile=/tmp/supervisord.pid
-
-[program:go-engine]
-command=/app/go-engine
-autorestart=true
-startretries=3
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-environment=PORT="7860"
-
-[program:dashboard]
-command=python -m uvicorn dashboard.server:app --host 0.0.0.0 --port 7861 --log-level warning
-directory=/app
-autorestart=true
-startretries=3
-startsecs=5
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-EOF
+COPY supervisord.conf /etc/supervisor/conf.d/wegh.conf
 
 # Set permissions
 ENV PYTHONPATH="/app:${PYTHONPATH}"
