@@ -1,3 +1,11 @@
+---
+title: WEGH Architecture
+emoji: 🖥️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
 # 🔬 WEGH — Workload Evaluation for Generative Hardware
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-0.2.3-blue.svg)](https://github.com/openenv)
